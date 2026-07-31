@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Create or remove the audio device and driver registration Voicemod needs.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+wine="$root/wine-build/wine"
+export WINEPREFIX=${WINEPREFIX:-"$root/prefix"}
+export WINESERVER="$root/wine-build/server/wineserver"
+sink_name=voicemod_bridge
+service='HKLM\System\CurrentControlSet\Services\VOICEMOD_Driver'
+
+sink_module()
+{
+    pactl list short modules |
+        awk -F'\t' -v arg="sink_name=$sink_name" \
+            '$2 == "module-null-sink" && index(" " $3 " ", " " arg " ") { print $1 }'
+}
+
+start_bridge()
+{
+    local driver="$root/wine-build/dlls/winevoicemod.sys/x86_64-windows/winevoicemod.sys"
+
+    if [[ -z "$(sink_module)" ]]; then
+        pactl load-module module-null-sink "sink_name=$sink_name" rate=48000 channels=2 \
+            sink_properties=device.description=Voicemod >/dev/null
+    fi
+
+    mkdir -p -- "$WINEPREFIX/drive_c/windows/system32/drivers"
+    install -m 0644 -- "$driver" "$WINEPREFIX/drive_c/windows/system32/drivers/"
+    "$wine" reg add "$service" /v DisplayName /t REG_SZ \
+        /d 'Voicemod Virtual Audio Device (WDM)' /f >/dev/null
+    "$wine" reg add "$service" /v ImagePath /t REG_EXPAND_SZ \
+        /d 'C:\windows\system32\drivers\winevoicemod.sys' /f >/dev/null
+    "$wine" reg add "$service" /v Type /t REG_DWORD /d 1 /f >/dev/null
+    "$wine" reg add "$service" /v Start /t REG_DWORD /d 3 /f >/dev/null
+    "$wine" reg add "$service" /v ErrorControl /t REG_DWORD /d 1 /f >/dev/null
+    "$wine" sc start VOICEMOD_Driver >/dev/null || true
+}
+
+stop_bridge()
+{
+    local id
+    for id in $(sink_module); do
+        pactl unload-module "$id" || true
+    done
+    "$wine" sc stop VOICEMOD_Driver >/dev/null || true
+}
+
+status_bridge()
+{
+    pactl list short sinks | awk -v name="$sink_name" '$2 == name'
+    "$wine" sc query VOICEMOD_Driver || true
+}
+
+case "${1:-}" in
+    start) start_bridge ;;
+    stop) stop_bridge ;;
+    status) status_bridge ;;
+    *) echo "usage: $0 {start|stop|status}" >&2; exit 2 ;;
+esac

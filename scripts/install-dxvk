@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Install DXVK into the prefix.  Wine's own D3D renderer lacks the shared
+# D3D11 textures Qt WebEngine needs, which leaves Voicemod's window black.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+export WINEPREFIX=${WINEPREFIX:-"$root/prefix"}
+export WINESERVER="$root/wine-build/server/wineserver"
+dxvk_dir=${1:-}
+
+if [[ ! -f "$dxvk_dir/d3d11.dll" || ! -f "$dxvk_dir/dxgi.dll" ]]; then
+    echo "usage: $0 <directory with the 64-bit d3d11.dll and dxgi.dll>" >&2
+    exit 2
+fi
+
+mkdir -p -- "$WINEPREFIX/drive_c/windows/system32"
+install -m 0644 -- "$dxvk_dir/d3d11.dll" "$dxvk_dir/dxgi.dll" \
+    "$WINEPREFIX/drive_c/windows/system32/"
+for dll in d3d11 dxgi; do
+    "$root/wine-build/wine" reg add 'HKCU\Software\Wine\DllOverrides' \
+        /v "$dll" /t REG_SZ /d native /f >/dev/null
+done

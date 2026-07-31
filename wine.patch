@@ -1,0 +1,456 @@
+Changes to Wine for the Voicemod bridge.
+Applies to upstream Wine commit 3ec14378590503ffbadfa936b994e5bf849fe967 (wine-11.14).
+
+diff --git a/configure.ac b/configure.ac
+index ee0b1c4..5a07900 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3402,6 +3402,7 @@ WINE_CONFIG_MAKEFILE(dlls/wineps.drv)
+ WINE_CONFIG_MAKEFILE(dlls/wineps16.drv16)
+ WINE_CONFIG_MAKEFILE(dlls/winepulse.drv)
+ WINE_CONFIG_MAKEFILE(dlls/wineusb.sys)
++WINE_CONFIG_MAKEFILE(dlls/winevoicemod.sys)
+ WINE_CONFIG_MAKEFILE(dlls/winevulkan)
+ WINE_CONFIG_MAKEFILE(dlls/winewayland.drv)
+ WINE_CONFIG_MAKEFILE(dlls/winex11.drv)
+diff --git a/dlls/mmdevapi/audiosessionmanager.c b/dlls/mmdevapi/audiosessionmanager.c
+index 06261ee..9714237 100644
+--- a/dlls/mmdevapi/audiosessionmanager.c
++++ b/dlls/mmdevapi/audiosessionmanager.c
+@@ -176,9 +176,16 @@ struct session_mgr
+ {
+     IAudioSessionManager2 IAudioSessionManager2_iface;
+     IMMDevice *device;
++    struct list notifications;
+     LONG ref;
+ };
+ 
++struct session_notification
++{
++    struct list entry;
++    IAudioSessionNotification *iface;
++};
++
+ static inline struct session_mgr *impl_from_IAudioSessionManager2(IAudioSessionManager2 *iface)
+ {
+     return CONTAINING_RECORD(iface, struct session_mgr, IAudioSessionManager2_iface);
+@@ -221,7 +228,18 @@ static ULONG WINAPI ASM_Release(IAudioSessionManager2 *iface)
+     TRACE("(%p) new ref %lu\n", This, ref);
+ 
+     if (!ref)
++    {
++        struct session_notification *notification, *next;
++
++        LIST_FOR_EACH_ENTRY_SAFE(notification, next, &This->notifications,
++                struct session_notification, entry)
++        {
++            list_remove(&notification->entry);
++            IAudioSessionNotification_Release(notification->iface);
++            free(notification);
++        }
+         free(This);
++    }
+ 
+     return ref;
+ }
+@@ -278,16 +296,43 @@ static HRESULT WINAPI ASM_RegisterSessionNotification(IAudioSessionManager2 *ifa
+                                                       IAudioSessionNotification *notification)
+ {
+     struct session_mgr *This = impl_from_IAudioSessionManager2(iface);
+-    FIXME("(%p)->(%p) - stub\n", This, notification);
+-    return E_NOTIMPL;
++    struct session_notification *entry;
++
++    TRACE("(%p)->(%p)\n", This, notification);
++    if (!notification) return E_POINTER;
++
++    LIST_FOR_EACH_ENTRY(entry, &This->notifications, struct session_notification, entry)
++        if (entry->iface == notification) return S_OK;
++
++    if (!(entry = malloc(sizeof(*entry)))) return E_OUTOFMEMORY;
++    IAudioSessionNotification_AddRef(notification);
++    entry->iface = notification;
++    list_add_tail(&This->notifications, &entry->entry);
++
++    /* Session creation callbacks are not generated yet, but retaining the
++     * callback and accepting registration matches the lifetime contract and
++     * lets clients which use notifications opportunistically initialize. */
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI ASM_UnregisterSessionNotification(IAudioSessionManager2 *iface,
+                                                         IAudioSessionNotification *notification)
+ {
+     struct session_mgr *This = impl_from_IAudioSessionManager2(iface);
+-    FIXME("(%p)->(%p) - stub\n", This, notification);
+-    return E_NOTIMPL;
++    struct session_notification *entry;
++
++    TRACE("(%p)->(%p)\n", This, notification);
++    if (!notification) return E_POINTER;
++
++    LIST_FOR_EACH_ENTRY(entry, &This->notifications, struct session_notification, entry)
++    {
++        if (entry->iface != notification) continue;
++        list_remove(&entry->entry);
++        IAudioSessionNotification_Release(entry->iface);
++        free(entry);
++        return S_OK;
++    }
++    return E_NOTFOUND;
+ }
+ 
+ static HRESULT WINAPI ASM_RegisterDuckNotification(IAudioSessionManager2 *iface,
+@@ -331,6 +376,7 @@ HRESULT AudioSessionManager_Create(IMMDevice *device, IAudioSessionManager2 **pp
+ 
+     This->IAudioSessionManager2_iface.lpVtbl = &AudioSessionManager2_Vtbl;
+     This->device = device;
++    list_init(&This->notifications);
+     This->ref = 1;
+ 
+     *ppv = &This->IAudioSessionManager2_iface;
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 48a532b..bd2d079 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -5796,6 +5796,8 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
+                                    PVOID out_buffer, UINT out_size )
+ {
+     struct async_irp *async;
++    const void *server_in_buffer = in_buffer;
++    void *opaque_in_value;
+     unsigned int status;
+     HANDLE wait_handle;
+     ULONG options;
+@@ -5805,11 +5807,30 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
+     async->buffer  = out_buffer;
+     async->size    = out_size;
+ 
++    /*
++     * Some METHOD_NEITHER drivers use Type3InputBuffer as an opaque value
++     * instead of a pointer.  Voicemod's VAD control driver does this for its
++     * event-registration request: lpInBuffer is the event HANDLE itself and
++     * nInBufferSize is sizeof(HANDLE).  Passing that through the normal server
++     * path tries to copy from the handle value as if it were a user address,
++     * failing with STATUS_ACCESS_VIOLATION before the Wine driver sees it.
++     *
++     * Preserve this private request's opaque value in the server payload.  The
++     * companion winevoicemod driver consumes the copied HANDLE value rather
++     * than dereferencing the original process address.
++     */
++    if (code == CTL_CODE(0x1d, 0x801, METHOD_NEITHER, FILE_ANY_ACCESS) &&
++        in_size == sizeof(in_buffer))
++    {
++        opaque_in_value = (void *)in_buffer;
++        server_in_buffer = &opaque_in_value;
++    }
++
+     SERVER_START_REQ( ioctl )
+     {
+         req->code        = code;
+         req->async       = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
+-        wine_server_add_data( req, in_buffer, in_size );
++        wine_server_add_data( req, server_in_buffer, in_size );
+         if ((code & 3) != METHOD_BUFFERED) wine_server_add_data( req, out_buffer, out_size );
+         wine_server_set_reply( req, out_buffer, out_size );
+         status = virtual_locked_server_call( req );
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 730a0cd..59d4d04 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1665,7 +1665,10 @@ size_t server_init_process(void)
+                                (version > SERVER_PROTOCOL_VERSION) ? "wine" : "wineserver" );
+ #if defined(__linux__) && defined(HAVE_PRCTL)
+     /* work around Ubuntu's ptrace breakage */
+-    if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, server_pid );
++    if (getenv( "VOICEMOD_ALLOW_PTRACE" ))
++        prctl( 0x59616d61 /* PR_SET_PTRACER */, -1 /* PR_SET_PTRACER_ANY */ );
++    else if (server_pid != -1)
++        prctl( 0x59616d61 /* PR_SET_PTRACER */, server_pid );
+ #endif
+ 
+     /* ignore SIGPIPE so that we get an EPIPE error instead  */
+diff --git a/dlls/setupapi/devinst.c b/dlls/setupapi/devinst.c
+index 121dda9..1dccb87 100644
+--- a/dlls/setupapi/devinst.c
++++ b/dlls/setupapi/devinst.c
+@@ -3803,6 +3803,37 @@ BOOL WINAPI SetupDiOpenDeviceInterfaceA(HDEVINFO devinfo, const char *device_pat
+     return ret;
+ }
+ 
++/***********************************************************************
++ *              SetupDiGetDeviceInterfaceAlias (SETUPAPI.@)
++ */
++BOOL WINAPI SetupDiGetDeviceInterfaceAlias(HDEVINFO devinfo, SP_DEVICE_INTERFACE_DATA *iface_data,
++        const GUID *alias_class, SP_DEVICE_INTERFACE_DATA *alias_data)
++{
++    struct device_iface *iface, *alias;
++
++    TRACE("%p %p %s %p\n", devinfo, iface_data, debugstr_guid(alias_class), alias_data);
++
++    if (!(iface = get_device_iface(devinfo, iface_data))) return FALSE;
++    if (!alias_class || !alias_data || alias_data->cbSize != sizeof(*alias_data))
++    {
++        SetLastError(ERROR_INVALID_PARAMETER);
++        return FALSE;
++    }
++
++    LIST_FOR_EACH_ENTRY(alias, &iface->device->interfaces, struct device_iface, entry)
++    {
++        if (!IsEqualGUID(&alias->class, alias_class)) continue;
++        if (!!alias->refstr != !!iface->refstr) continue;
++        if (alias->refstr && wcsicmp(alias->refstr, iface->refstr)) continue;
++
++        copy_device_iface_data(alias_data, alias);
++        return TRUE;
++    }
++
++    SetLastError(ERROR_NO_SUCH_DEVICE_INTERFACE);
++    return FALSE;
++}
++
+ /***********************************************************************
+  *              SetupDiOpenDeviceInterfaceRegKey (SETUPAPI.@)
+  */
+diff --git a/dlls/setupapi/setupapi.spec b/dlls/setupapi/setupapi.spec
+index bb0bdb3..883569f 100644
+--- a/dlls/setupapi/setupapi.spec
++++ b/dlls/setupapi/setupapi.spec
+@@ -354,7 +354,7 @@
+ @ stdcall SetupDiGetDeviceInstallParamsW(ptr ptr ptr)
+ @ stdcall SetupDiGetDeviceInstanceIdA(ptr ptr ptr long ptr)
+ @ stdcall SetupDiGetDeviceInstanceIdW(ptr ptr ptr long ptr)
+-@ stub SetupDiGetDeviceInterfaceAlias
++@ stdcall SetupDiGetDeviceInterfaceAlias(long ptr ptr ptr)
+ @ stdcall SetupDiGetDeviceInterfaceDetailA(long ptr ptr long ptr ptr)
+ @ stdcall SetupDiGetDeviceInterfaceDetailW(long ptr ptr long ptr ptr)
+ @ stdcall SetupDiGetDeviceInterfacePropertyKeys(ptr ptr ptr long ptr long)
+diff --git a/dlls/wbemprox/builtin.c b/dlls/wbemprox/builtin.c
+index e073c7a..836a8e1 100644
+--- a/dlls/wbemprox/builtin.c
++++ b/dlls/wbemprox/builtin.c
+@@ -4977,6 +4977,7 @@ static struct table cimv2_builtin_classes[] =
+     { L"Win32_SID", C(col_sid), 0, 0, NULL, fill_sid },
+     { L"Win32_Service", C(col_service), 0, 0, NULL, fill_service },
+     { L"Win32_SoundDevice", C(col_sounddevice), 0, 0, NULL, fill_sounddevice },
++    { L"Win32_SystemDriver", C(col_service), 0, 0, NULL, fill_service },
+     { L"Win32_SystemEnclosure", C(col_systemenclosure), 0, 0, NULL, fill_systemenclosure },
+     { L"Win32_VideoController", C(col_videocontroller), 0, 0, NULL, fill_videocontroller },
+     { L"Win32_Volume", C(col_volume), 0, 0, NULL, fill_volume },
+diff --git a/dlls/winepulse.drv/pulse.c b/dlls/winepulse.drv/pulse.c
+index ef13a1e..8444d26 100644
+--- a/dlls/winepulse.drv/pulse.c
++++ b/dlls/winepulse.drv/pulse.c
+@@ -599,12 +599,28 @@ static void fill_device_info(PhysDevice *dev, pa_proplist *p)
+ static void pulse_add_device(struct list *list, pa_proplist *proplist, int index, EndpointFormFactor form,
+                              UINT channel_mask, const char *pulse_name, const char *desc)
+ {
++    static const char voicemod_desc[] = "Voicemod Virtual Audio Device (WDM)";
+     size_t len = strlen(pulse_name);
+     PhysDevice *dev = malloc(FIELD_OFFSET(PhysDevice, pulse_name[len + 1]));
+ 
+     if (!dev)
+         return;
+ 
++    /* PipeWire's PulseAudio module parser cannot preserve whitespace in a
++     * dynamically supplied device.description on all supported versions.
++     * Give the bridge's stable node names the Windows endpoint names that
++     * Voicemod searches for. */
++    if (!strcmp(pulse_name, "voicemod_bridge"))
++    {
++        desc = voicemod_desc;
++        form = LineLevel;
++    }
++    else if (!strcmp(pulse_name, "voicemod_bridge.monitor"))
++    {
++        desc = voicemod_desc;
++        form = Microphone;
++    }
++
+     if (!(dev->name = get_device_name(desc, proplist))) {
+         free(dev);
+         return;
+diff --git a/dlls/winevoicemod.sys/Makefile.in b/dlls/winevoicemod.sys/Makefile.in
+new file mode 100644
+index 0000000..fe1816b
+--- /dev/null
++++ b/dlls/winevoicemod.sys/Makefile.in
+@@ -0,0 +1,7 @@
++MODULE = winevoicemod.sys
++IMPORTS = ntoskrnl
++
++EXTRADLLFLAGS = -Wl,--subsystem,native
++
++SOURCES = \
++	main.c
+diff --git a/dlls/winevoicemod.sys/main.c b/dlls/winevoicemod.sys/main.c
+new file mode 100644
+index 0000000..6948695
+--- /dev/null
++++ b/dlls/winevoicemod.sys/main.c
+@@ -0,0 +1,139 @@
++/*
++ * Wine Voicemod control-device bridge
++ *
++ * Copyright 2026
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include <stdarg.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "windef.h"
++#include "winbase.h"
++#include "winternl.h"
++#include "winioctl.h"
++#include "ddk/wdm.h"
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(voicemod);
++
++static UNICODE_STRING legacy_link = RTL_CONSTANT_STRING(L"\\??\\VMDriver");
++static UNICODE_STRING modern_link = RTL_CONSTANT_STRING(L"\\??\\voicemodvad");
++
++static NTSTATUS complete_irp(IRP *irp, NTSTATUS status, ULONG_PTR information)
++{
++    irp->IoStatus.Status = status;
++    irp->IoStatus.Information = information;
++    IoCompleteRequest(irp, IO_NO_INCREMENT);
++    return status;
++}
++
++static NTSTATUS dispatch_open_close(DEVICE_OBJECT *device, IRP *irp)
++{
++    IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
++
++    TRACE("device %p major %#x file %p\n", device, stack->MajorFunction, stack->FileObject);
++    return complete_irp(irp, STATUS_SUCCESS, 0);
++}
++
++static NTSTATUS dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
++{
++    IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
++    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
++    ULONG input_len = stack->Parameters.DeviceIoControl.InputBufferLength;
++    ULONG output_len = stack->Parameters.DeviceIoControl.OutputBufferLength;
++    BYTE *buffer = irp->AssociatedIrp.SystemBuffer;
++    ULONG dump_len = min(input_len, 64);
++
++    TRACE("device %p ioctl %#lx type %#lx function %#lx method %#lx access %#lx in %lu out %lu\n",
++            device, code, code >> 16, (code >> 2) & 0xfff,
++            code & 3, (code >> 14) & 3, input_len, output_len);
++    if (buffer && dump_len) TRACE("input %s\n", debugstr_an((const char *)buffer, dump_len));
++
++    /*
++     * Until the userspace protocol has been identified, acknowledge requests
++     * with deterministic zero-filled output.  The trace above is deliberately
++     * detailed enough to derive the real request/response structures from an
++     * application run without loading Voicemod's Windows kernel driver.
++     */
++    if (buffer && output_len) memset(buffer, 0, output_len);
++    return complete_irp(irp, STATUS_SUCCESS, output_len);
++}
++
++static NTSTATUS create_control_device(DRIVER_OBJECT *driver, const WCHAR *device_name,
++        UNICODE_STRING *link)
++{
++    UNICODE_STRING name;
++    DEVICE_OBJECT *device;
++    NTSTATUS status;
++
++    RtlInitUnicodeString(&name, device_name);
++    if ((status = IoCreateDevice(driver, 0, &name, FILE_DEVICE_UNKNOWN,
++            FILE_DEVICE_SECURE_OPEN, FALSE, &device)))
++    {
++        ERR("failed to create %s, status %#lx\n", debugstr_w(device_name), status);
++        return status;
++    }
++
++    if ((status = IoCreateSymbolicLink(link, &name)))
++    {
++        ERR("failed to link %s to %s, status %#lx\n", debugstr_w(link->Buffer),
++                debugstr_w(device_name), status);
++        IoDeleteDevice(device);
++        return status;
++    }
++
++    device->Flags &= ~DO_DEVICE_INITIALIZING;
++    TRACE("created %s as %s\n", debugstr_w(device_name), debugstr_w(link->Buffer));
++    return STATUS_SUCCESS;
++}
++
++static void WINAPI driver_unload(DRIVER_OBJECT *driver)
++{
++    DEVICE_OBJECT *device = driver->DeviceObject;
++
++    IoDeleteSymbolicLink(&legacy_link);
++    IoDeleteSymbolicLink(&modern_link);
++    while (device)
++    {
++        DEVICE_OBJECT *next = device->NextDevice;
++        IoDeleteDevice(device);
++        device = next;
++    }
++}
++
++static NTSTATUS WINAPI add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *physical_device)
++{
++    TRACE("driver %p physical device %p\n", driver, physical_device);
++    /* The host audio nodes are enumerated by winepulse; no PortCls FDO is
++     * needed for the ROOT\\MEDIA node installed by Voicemod's INF. */
++    return STATUS_SUCCESS;
++}
++
++NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, UNICODE_STRING *path)
++{
++    NTSTATUS status;
++
++    TRACE("driver %p path %s\n", driver, debugstr_w(path->Buffer));
++
++    driver->MajorFunction[IRP_MJ_CREATE] = dispatch_open_close;
++    driver->MajorFunction[IRP_MJ_CLOSE] = dispatch_open_close;
++    driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = dispatch_ioctl;
++    driver->DriverUnload = driver_unload;
++    driver->DriverExtension->AddDevice = add_device;
++
++    if ((status = create_control_device(driver, L"\\Device\\VMDriver", &legacy_link)))
++        return status;
++    if ((status = create_control_device(driver, L"\\Device\\voicemodvad", &modern_link)))
++    {
++        driver_unload(driver);
++        return status;
++    }
++
++    return STATUS_SUCCESS;
++}
+diff --git a/tools/wine/wine.c b/tools/wine/wine.c
+index 743b3c0..74287d8 100644
+--- a/tools/wine/wine.c
++++ b/tools/wine/wine.c
+@@ -23,6 +23,9 @@
+ #include "../tools.h"
+ 
+ #include <dlfcn.h>
++#ifdef __linux__
++# include <sys/prctl.h>
++#endif
+ 
+ static const char *bindir;
+ static const char *libdir;
+@@ -64,6 +67,11 @@ int main( int argc, char *argv[] )
+ {
+     void (*init_func)(int, char **);
+ 
++#ifdef __linux__
++    /* Explicit, per-process opt-in for local debugging under Yama. */
++    if (getenv( "VOICEMOD_ALLOW_PTRACE" )) prctl( PR_SET_PTRACER, PR_SET_PTRACER_ANY );
++#endif
++
+     bindir = get_bindir( argv[0] );
+     libdir = get_libdir( bindir );
+     init_func = dlsym( load_ntdll(), "__wine_main" );
