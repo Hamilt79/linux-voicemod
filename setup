@@ -86,9 +86,8 @@ create_prefix()
 {
     say "Preparing the Wine prefix in $WINEPREFIX"
     mkdir -p -- "$WINEPREFIX"
-    # winemenubuilder would register menu entries and link handlers that call
-    # a system-wide 'wine', bypassing this build.
-    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' vm_wine wineboot -u >/dev/null 2>&1 ||
+    # Skip the prompts to download Mono and Gecko, which Voicemod does not use.
+    WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree=d;mshtml=d" vm_wine wineboot -u >/dev/null 2>&1 ||
         die "Could not initialise the Wine prefix."
     "$WINESERVER" -w
 }
@@ -100,7 +99,7 @@ run_installer()
     say "Running the Voicemod installer (its progress window will appear)"
     install -m 0755 -- "$installer" "$copy"
     # /SILENT avoids the installer's final page, which hangs under Wine.
-    WINEDLLOVERRIDES='winemenubuilder.exe=d' vm_wine 'C:\voicemod-installer.exe' \
+    vm_wine 'C:\voicemod-installer.exe' \
         /SILENT /NORESTART /SUPPRESSMSGBOXES '/LOG=C:\voicemod-install.log' \
         >"$log_dir/installer.log" 2>&1 || true
     # The installer starts Voicemod when it finishes; close it so the first

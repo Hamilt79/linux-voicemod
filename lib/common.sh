@@ -16,7 +16,12 @@ wine_bin="$wine_build/wine"
 export WINEPREFIX=${VOICEMOD_PREFIX:-"$vm_root/prefix"}
 export WINESERVER="$wine_build/server/wineserver"
 export WINEDEBUG=${VOICEMOD_WINEDEBUG:--all}
-unset WINEARCH WINELOADER WINEDLLPATH WINEDLLOVERRIDES
+unset WINEARCH WINELOADER WINEDLLPATH
+# winemenubuilder writes menu entries and file associations into the user's
+# desktop which call a system-wide 'wine' on this prefix.  It must be disabled
+# for every process: Wine's services keep the environment of whichever
+# command started them.
+export WINEDLLOVERRIDES='winemenubuilder.exe=d'
 
 app_exe='C:\Program Files\Voicemod V3\Voicemod.exe'
 app_unix="$WINEPREFIX/drive_c/Program Files/Voicemod V3/Voicemod.exe"
