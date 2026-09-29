@@ -2,4 +2,4 @@
 # Written by package-wine.
 prebuilt_commit=7cca1a09c0dff7244eafff5013e090f1ec88210d
 prebuilt_url=https://github.com/Hamilt79/linux-voicemod/releases/download/wine-7cca1a09c0df/wine-voicemod-7cca1a09c0df-x86_64.tar.xz
-prebuilt_sha256=3bfdadf5d4af573678ddec1c2c376f7b94bcf7089e28a31c8086504a61026723
+prebuilt_sha256=66aa9b4535de297cc9031cbc34f98d05fb483922a4c3c0a872295d2a5d20d069

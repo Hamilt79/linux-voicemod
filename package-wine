@@ -36,6 +36,21 @@ mkdir -p -- "$work/build"
 dist="$work/root/usr"
 rm -rf -- "$dist/include" "$dist/share/man"
 
+# The LGPL requires the license to accompany the build, and NOTICES.md covers
+# the libraries bundled with Wine.
+doc="$dist/share/doc/wine-voicemod"
+mkdir -p -- "$doc"
+install -m 0644 -- "$wine_src/LICENSE" "$wine_src/COPYING.LIB" "$wine_src/AUTHORS" \
+    "$wine_src/NOTICES.md" "$doc/"
+cat >"$doc/SOURCE" <<END
+This is Wine with changes for running Voicemod, built from
+https://github.com/Hamilt79/wine-voicemod
+commit $commit
+
+Wine is free software under the GNU Lesser General Public License, version 2.1
+or later. See LICENSE and COPYING.LIB in this directory.
+END
+
 say "Stripping debug information"
 find "$dist/bin" "$dist/lib" -type f \( -name '*.so' -o -name '*.so.*' -o -path '*/bin/*' \) \
     -exec strip --strip-unneeded {} + 2>/dev/null || true
