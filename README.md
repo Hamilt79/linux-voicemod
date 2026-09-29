@@ -8,13 +8,13 @@ to Linux applications as a microphone called **Voicemod Microphone**.
 Download the Windows installer from voicemod.net, then:
 
 ```sh
-git clone --recursive https://github.com/Hamilt79/linux-voicemod
+git clone https://github.com/Hamilt79/linux-voicemod
 cd linux-voicemod
-./setup /path/to/VoicemodInstaller.exe
+./setup --prebuilt /path/to/VoicemodInstaller.exe
+# Remove --prebuilt to build Wine yourself, which takes 10 to 30 minutes.
 ```
 
-The first run builds Wine, which takes 10 to 30 minutes. After that, start
-Voicemod from the application menu or with:
+After that, start Voicemod from the application menu or with:
 
 ```sh
 ./voicemod
@@ -35,6 +35,7 @@ microphone selected as the input.
 | `./voicemod --stop` | Close Voicemod and remove its audio devices |
 | `./voicemod --status` | Show whether Voicemod and its devices are up |
 | `./setup` | Refresh the setup, for example after updating this repository |
+| `./setup --prebuilt` | Download Wine instead of building it |
 | `./setup --rebuild-wine` | Rebuild Wine from scratch |
 
 The **Voicemod** output device and the **Voicemod Microphone** exist only
@@ -47,6 +48,8 @@ while Voicemod runs. They are removed when it exits.
 - A network connection during setup. `setup` downloads DXVK and whatever
   Voicemod's installer fetches.
 - Build tools: `setup` lists the packages to install if any are missing.
+  `--prebuilt` needs none, but the prebuilt Wine only runs on systems at least
+  as recent as the one it was built on.
 
 ## Layout
 
@@ -55,7 +58,8 @@ while Voicemod runs. They are removed when it exits.
 | `setup`, `voicemod` | The two entry points |
 | `lib/common.sh` | Shared paths and helpers |
 | `wine/` | Wine with the Voicemod changes, a git submodule |
-| `wine-build/` | The Wine build, created by `setup` |
+| `wine-build/` | Wine, built or downloaded by `setup` |
+| `package-wine` | Packages a built Wine as a prebuilt release |
 | `dxvk/` | DXVK, downloaded by `setup` |
 | `prefix/` | The Wine prefix holding Voicemod and your Voicemod settings |
 | `logs/` | Build, installer and last session logs |

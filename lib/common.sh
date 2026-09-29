@@ -9,12 +9,26 @@ vm_root=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pw
 
 wine_src="$vm_root/wine"
 wine_build=${VOICEMOD_WINE_BUILD:-"$vm_root/wine-build"}
-wine_bin="$wine_build/wine"
+
+# wine-build holds either a compiled build tree or an unpacked prebuilt Wine,
+# which has the layout of an installation.
+wine_paths()
+{
+    if [[ -x "$wine_build/bin/wine" ]]; then
+        wine_bin="$wine_build/bin/wine"
+        export WINESERVER="$wine_build/bin/wineserver"
+        wine_driver="$wine_build/lib/wine/x86_64-windows/winevoicemod.sys"
+    else
+        wine_bin="$wine_build/wine"
+        export WINESERVER="$wine_build/server/wineserver"
+        wine_driver="$wine_build/dlls/winevoicemod.sys/x86_64-windows/winevoicemod.sys"
+    fi
+}
+wine_paths
 
 # Deliberately not inherited from the caller's WINEPREFIX, which usually
 # belongs to an unrelated Wine installation.
 export WINEPREFIX=${VOICEMOD_PREFIX:-"$vm_root/prefix"}
-export WINESERVER="$wine_build/server/wineserver"
 export WINEDEBUG=${VOICEMOD_WINEDEBUG:--all}
 unset WINEARCH WINELOADER WINEDLLPATH
 # winemenubuilder writes menu entries and file associations into the user's
@@ -45,8 +59,7 @@ vm_wine()
 
 require_wine()
 {
-    [[ -x "$wine_bin" && -x "$WINESERVER" &&
-       -f "$wine_build/dlls/winevoicemod.sys/x86_64-windows/winevoicemod.sys" ]] ||
+    [[ -x "$wine_bin" && -x "$WINESERVER" && -f "$wine_driver" ]] ||
         die "Wine is not built yet. Run $vm_root/setup first."
 }
 
@@ -120,7 +133,7 @@ hex_utf16()
 # updater overwrite the service path, so this runs before every launch.
 driver_register()
 {
-    local source="$wine_build/dlls/winevoicemod.sys/x86_64-windows/winevoicemod.sys"
+    local source="$wine_driver"
     local target="$WINEPREFIX/drive_c/windows/system32/drivers/winevoicemod.sys"
 
     mkdir -p -- "$(dirname -- "$target")"

@@ -3,6 +3,7 @@
 #
 #   setup /path/to/VoicemodInstaller.exe    full setup
 #   setup                                   refresh an existing setup
+#   setup --prebuilt [installer]            download Wine instead of building it
 #   setup --rebuild-wine [installer]        rebuild Wine even if up to date
 #   setup --wine-only                       only fetch and build Wine
 #
@@ -14,11 +15,13 @@ set -euo pipefail
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/lib/common.sh"
 
 rebuild=0
+prebuilt=0
 wine_only=0
 installer=
 for arg in "$@"; do
     case "$arg" in
         -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --prebuilt) prebuilt=1 ;;
         --rebuild-wine) rebuild=1 ;;
         --wine-only) wine_only=1 ;;
         -*) die "Unknown option: $arg" ;;
@@ -32,9 +35,12 @@ fi
 
 check_tools()
 {
-    local missing=() tool
-    for tool in git make gcc bison flex pactl flock iconv curl tar sha256sum \
-                x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do
+    local missing=() tool tools=(git pactl flock iconv curl tar sha256sum)
+
+    if ((prebuilt)); then tools+=(xz)
+    else tools+=(make gcc bison flex x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc)
+    fi
+    for tool in "${tools[@]}"; do
         command -v "$tool" >/dev/null || missing+=("$tool")
     done
     ((${#missing[@]})) || return 0
@@ -44,13 +50,66 @@ On Debian/Ubuntu:  sudo apt install git build-essential bison flex \\
     libxext-dev libfreetype-dev libgnutls28-dev libvulkan-dev libwayland-dev \\
     libxkbcommon-dev libasound2-dev libdbus-1-dev libfontconfig-dev
 On Fedora:         sudo dnf builddep wine && sudo dnf install mingw64-gcc mingw32-gcc pulseaudio-utils
-On Arch:           sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse vulkan-headers gnutls"
+On Arch:           sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse vulkan-headers gnutls
+With --prebuilt only git, curl, tar, xz and pactl are needed."
+}
+
+# The Wine commit this version of the repository expects.
+wine_commit()
+{
+    if [[ -e "$wine_src/.git" ]]; then git -C "$wine_src" rev-parse HEAD
+    else git -C "$vm_root" ls-tree HEAD wine | awk '{ print $3 }'
+    fi
+}
+
+wine_is_current()
+{
+    ((!rebuild)) && [[ -x "$wine_bin" && "$(cat "$wine_build/.voicemod-stamp" 2>/dev/null)" == "$1" ]]
+}
+
+fetch_wine()
+{
+    local commit archive="$vm_root/wine-prebuilt.tar.xz"
+    local prebuilt_commit= prebuilt_url= prebuilt_sha256=
+
+    commit=$(wine_commit)
+    if wine_is_current "$commit"; then
+        say "Wine is up to date"
+        return
+    fi
+
+    # shellcheck source=/dev/null
+    [[ -f "$vm_root/wine-prebuilt" ]] && source "$vm_root/wine-prebuilt"
+    [[ "$prebuilt_commit" == "$commit" ]] ||
+        die "No prebuilt Wine is published for this version. Run $0 without
+--prebuilt to build it instead."
+
+    say "Downloading Wine"
+    curl -fL --progress-bar -o "$archive" "${VOICEMOD_PREBUILT_URL:-$prebuilt_url}" ||
+        die "Could not download the prebuilt Wine."
+    if ! printf '%s  %s\n' "$prebuilt_sha256" "$archive" | sha256sum -c --status; then
+        rm -f -- "$archive"
+        die "The prebuilt Wine does not match its expected checksum."
+    fi
+    rm -rf -- "$wine_build"
+    mkdir -p -- "$wine_build"
+    tar -xJf "$archive" -C "$wine_build" || die "Could not unpack the prebuilt Wine."
+    rm -f -- "$archive"
+    printf '%s\n' "$commit" >"$wine_build/.voicemod-stamp"
+    wine_paths
+    "$wine_bin" --version >/dev/null 2>&1 ||
+        die "The prebuilt Wine does not run on this system, which is probably
+older than the one it was built on. Run $0 --rebuild-wine to build it instead."
 }
 
 build_wine()
 {
     local stamp jobs=${JOBS:-$(nproc)}
 
+    if wine_is_current "$(wine_commit)"; then
+        say "Wine is up to date"
+        return
+    fi
     if [[ ! -f "$wine_src/configure" ]]; then
         say "Fetching Wine"
         git -C "$vm_root" submodule update --init --depth 1 wine ||
@@ -59,14 +118,9 @@ build_wine()
     fi
     stamp=$(git -C "$wine_src" rev-parse HEAD)
 
-    if ((!rebuild)) && [[ -x "$wine_bin" && "$(cat "$wine_build/.voicemod-stamp" 2>/dev/null)" == "$stamp" ]]; then
-        say "Wine is up to date"
-        return
-    fi
-
     say "Building Wine with $jobs jobs (10 to 30 minutes the first time)"
-    ((rebuild)) && rm -rf -- "$wine_build"
-    mkdir -p -- "$wine_build" "$log_dir"
+    rm -rf -- "$wine_build"
+    mkdir -p -- "$wine_build"
     (
         cd -- "$wine_build"
         "$wine_src/configure" --enable-archs=i386,x86_64 --disable-tests
@@ -80,6 +134,7 @@ development package, then run: $0 --rebuild-wine"
     grep -q -E 'lib(gnutls|vulkan)[^ ]* .*not found' "$log_dir/wine-build.log" &&
         warn "Wine was built without GnuTLS or Vulkan; Voicemod needs both. See $log_dir/wine-build.log"
     printf '%s\n' "$stamp" >"$wine_build/.voicemod-stamp"
+    wine_paths
 }
 
 create_prefix()
@@ -149,7 +204,8 @@ EOF
 }
 
 check_tools
-build_wine
+mkdir -p -- "$log_dir"
+if ((prebuilt)); then fetch_wine; else build_wine; fi
 ((wine_only)) && exit 0
 create_prefix
 say "Installing DXVK $dxvk_version"

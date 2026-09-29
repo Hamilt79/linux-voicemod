@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Build the 'wine' submodule and package it as a prebuilt release.
+#
+#   package-wine [output directory]
+#
+# Writes wine-voicemod-<commit>-x86_64.tar.xz and records it in wine-prebuilt,
+# which 'setup --prebuilt' reads.  Upload the archive to a release tagged
+# wine-<commit>, then commit wine-prebuilt.
+#
+# Wine is built separately from wine-build, because compiled programs embed
+# the paths they were built from, which would publish the home directory of
+# whoever made the release.
+set -euo pipefail
+
+# shellcheck source=lib/common.sh
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/lib/common.sh"
+
+out=$(readlink -f -- "${1:-$vm_root}")
+[[ -f "$wine_src/configure" ]] || die "The Wine source is missing. Run: git submodule update --init --depth 1 wine"
+[[ -z "$(git -C "$wine_src" status --porcelain)" ]] || die "The Wine source has uncommitted changes."
+commit=$(git -C "$wine_src" rev-parse HEAD)
+name="wine-voicemod-${commit:0:12}-x86_64.tar.xz"
+work=$(mktemp -d /var/tmp/wine-voicemod.XXXXXX)
+trap 'rm -rf -- "$work"' EXIT
+
+maps="-ffile-prefix-map=$wine_src=wine -ffile-prefix-map=$work/build=build"
+say "Building Wine ${commit:0:12} (10 to 30 minutes)"
+mkdir -p -- "$work/build"
+(
+    cd -- "$work/build"
+    "$wine_src/configure" --enable-archs=i386,x86_64 --disable-tests --prefix=/usr \
+        CFLAGS="-g -O2 $maps" CROSSCFLAGS="-g -O2 $maps"
+    make -j"${JOBS:-$(nproc)}"
+    make install DESTDIR="$work/root"
+) >"$work/build.log" 2>&1 || { cp -- "$work/build.log" "$out/package-wine.log"; die "The build failed. See $out/package-wine.log"; }
+dist="$work/root/usr"
+rm -rf -- "$dist/include" "$dist/share/man"
+
+say "Stripping debug information"
+find "$dist/bin" "$dist/lib" -type f \( -name '*.so' -o -name '*.so.*' -o -path '*/bin/*' \) \
+    -exec strip --strip-unneeded {} + 2>/dev/null || true
+find "$dist/lib" -type f -path '*/x86_64-windows/*' -exec x86_64-w64-mingw32-strip --strip-debug {} + 2>/dev/null || true
+find "$dist/lib" -type f -path '*/i386-windows/*' -exec i686-w64-mingw32-strip --strip-debug {} + 2>/dev/null || true
+
+# grep exits with 1 when nothing matches, which is the expected result.
+leaks=$(grep -rl -a -F -e "$HOME" -e "$USER" -e "$(hostname)" "$dist" || true)
+[[ -z "$leaks" ]] ||
+    die "$(wc -l <<<"$leaks") packaged files contain the home directory, user or host name."
+
+say "Compressing $name"
+tar -C "$dist" --owner=0 --group=0 --numeric-owner -cf - . | xz -9 -T0 >"$out/$name"
+sum=$(sha256sum "$out/$name" | cut -d' ' -f1)
+
+cat >"$vm_root/wine-prebuilt" <<END
+# Prebuilt Wine for the 'wine' submodule, used by 'setup --prebuilt'.
+# Written by package-wine.
+prebuilt_commit=$commit
+prebuilt_url=https://github.com/Hamilt79/linux-voicemod/releases/download/wine-${commit:0:12}/$name
+prebuilt_sha256=$sum
+END
+say "Wrote $out/$name ($(du -h "$out/$name" | cut -f1))"
+say "Requires glibc $(objdump -T "$dist/bin/wineserver" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1 | cut -d_ -f2) or newer"
