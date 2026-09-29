@@ -31,6 +31,10 @@ done
 if [[ -n "$installer" ]]; then
     [[ -f "$installer" ]] || die "Installer not found: $installer"
     installer=$(readlink -f -- "$installer")
+    # Windows programs start with the bytes "MZ".
+    [[ "$(head -c 2 -- "$installer" | tr -d '\0')" == MZ ]] ||
+        die "Not a Windows installer: $installer
+Pass the VoicemodInstaller .exe downloaded from voicemod.net."
 fi
 
 check_tools()
