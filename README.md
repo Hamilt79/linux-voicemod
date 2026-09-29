@@ -76,7 +76,7 @@ JOBS=8                                # parallel build jobs
 
 ## Why a modified Wine
 
-Voicemod relies on a Windows kernel audio driver and a few Windows behaviours
+Voicemod relies on a Windows kernel audio driver and a few Windows behaviors
 that Wine does not provide. The changes live in a fork of Wine,
 [wine-voicemod](https://github.com/Hamilt79/wine-voicemod), which this
 repository includes as the `wine` submodule. They are small, about 450 lines,
@@ -109,12 +109,6 @@ version changed; set `VOICEMOD_DRIVER_VERSION` in `config`.
 - **Voicemod loses your real microphone.** If you make **Voicemod Microphone**
   the system's default input device, Voicemod may stop using your real
   microphone. Select your real microphone again in Voicemod's input settings.
-
-## Privacy
-
-Voicemod contacts its update, API and telemetry services when it runs. It
-verifies their certificates by pinned key, so it does not start behind an
-intercepting proxy.
 
 ## Removing
 
