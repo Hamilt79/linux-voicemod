@@ -105,9 +105,6 @@ version changed; set `VOICEMOD_DRIVER_VERSION` in `config`.
 - **Voicemod loses your real microphone.** If you make **Voicemod Microphone**
   the system's default input device, Voicemod may stop using your real
   microphone. Select your real microphone again in Voicemod's input settings.
-- **The window gets stuck in place.** Minimizing or maximizing Voicemod's
-  window can leave it at a position it no longer moves from. Closing Voicemod
-  and starting it again resets the window.
 
 ## Privacy
 
