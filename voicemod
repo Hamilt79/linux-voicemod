@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Launch Voicemod.  Creates the Voicemod audio devices for the session and
+# removes them again when Voicemod exits.
+#
+#   voicemod              start Voicemod (or bring up the running instance)
+#   voicemod <link>       hand a voicemod: login link to Voicemod
+#   voicemod --stop       close Voicemod and remove its audio devices
+#   voicemod --status     show whether Voicemod and its devices are up
+set -uo pipefail
+
+# shellcheck source=lib/common.sh
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/lib/common.sh"
+
+show_status()
+{
+    if [[ -e "$session_lock" ]] && ! flock -n "$session_lock" true; then
+        echo "Voicemod: running"
+    else
+        echo "Voicemod: not running"
+    fi
+    if command -v pactl >/dev/null; then
+        pactl list short sinks   | awk -v n="$sink_name" '$2 == n { print "output device: " $2 " (" $NF ")" }'
+        pactl list short sources | awk -v n="$mic_name"  '$2 == n { print "microphone:    " $2 " (" $NF ")" }'
+    fi
+}
+
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        exit 0 ;;
+    --status)
+        show_status
+        exit 0 ;;
+    --stop)
+        require_wine
+        "$WINESERVER" -k 2>/dev/null
+        audio_down
+        exit 0 ;;
+esac
+
+require_wine
+[[ -f "$app_unix" ]] || die "Voicemod is not installed. Run: $vm_root/setup /path/to/VoicemodInstaller.exe"
+
+# Links carry a one-time login code: never echo or log the arguments.
+args=()
+for arg in "$@"; do
+    shopt -s nocasematch
+    [[ "$arg" == voicemod:* ]] && args+=("$arg")
+    shopt -u nocasematch
+done
+
+mkdir -p -- "$log_dir"
+exec 9>"$session_lock"
+if ! flock -n 9; then
+    # Already running: a second instance passes the link on, or raises the
+    # window, and exits by itself.
+    exec 9>&-
+    vm_wine "$app_exe" "${args[@]}" >/dev/null 2>&1
+    exit 0
+fi
+
+cleanup()
+{
+    trap - EXIT INT TERM HUP
+    "$WINESERVER" -k 2>/dev/null
+    audio_down
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+export QTWEBENGINE_DISABLE_SANDBOX=1
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --no-sandbox"
+
+{
+    audio_up
+    driver_register
+    driver_start
+    vm_wine "$app_exe" "${args[@]}"
+    # Voicemod restarts itself after updates; wait for the whole prefix.
+    "$WINESERVER" -w
+} 9>&- >"$log_dir/session.log" 2>&1

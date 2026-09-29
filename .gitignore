@@ -1,3 +1,10 @@
-/wine/
+# Created by setup
 /wine-build/
-/prefix/
+/dxvk/
+/prefix*/
+/logs/
+/backup/
+/voicemod.png
+
+# Optional local overrides
+/config

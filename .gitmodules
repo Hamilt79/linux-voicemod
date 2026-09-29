@@ -1,0 +1,5 @@
+[submodule "wine"]
+	path = wine
+	url = https://github.com/Hamilt79/wine-voicemod.git
+	branch = voicemod
+	shallow = true

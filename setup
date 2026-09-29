@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Set up Voicemod on Linux from Voicemod's Windows installer.
+#
+#   setup /path/to/VoicemodInstaller.exe    full setup
+#   setup                                   refresh an existing setup
+#   setup --rebuild-wine [installer]        rebuild Wine even if up to date
+#   setup --wine-only                       only fetch and build Wine
+#
+# Builds Wine (first run only), creates the Wine prefix, runs the
+# installer, and adds Voicemod to the application menu.  Safe to run again.
+set -euo pipefail
+
+# shellcheck source=lib/common.sh
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/lib/common.sh"
+
+rebuild=0
+wine_only=0
+installer=
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --rebuild-wine) rebuild=1 ;;
+        --wine-only) wine_only=1 ;;
+        -*) die "Unknown option: $arg" ;;
+        *) installer=$arg ;;
+    esac
+done
+if [[ -n "$installer" ]]; then
+    [[ -f "$installer" ]] || die "Installer not found: $installer"
+    installer=$(readlink -f -- "$installer")
+fi
+
+check_tools()
+{
+    local missing=() tool
+    for tool in git make gcc bison flex pactl flock iconv curl tar sha256sum \
+                x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do
+        command -v "$tool" >/dev/null || missing+=("$tool")
+    done
+    ((${#missing[@]})) || return 0
+    die "Missing tools: ${missing[*]}
+On Debian/Ubuntu:  sudo apt install git build-essential bison flex \\
+    gcc-mingw-w64 pulseaudio-utils util-linux curl libpulse-dev libx11-dev \\
+    libxext-dev libfreetype-dev libgnutls28-dev libvulkan-dev libwayland-dev \\
+    libxkbcommon-dev libasound2-dev libdbus-1-dev libfontconfig-dev
+On Fedora:         sudo dnf builddep wine && sudo dnf install mingw64-gcc mingw32-gcc pulseaudio-utils
+On Arch:           sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse vulkan-headers gnutls"
+}
+
+build_wine()
+{
+    local stamp jobs=${JOBS:-$(nproc)}
+
+    if [[ ! -f "$wine_src/configure" ]]; then
+        say "Fetching Wine"
+        git -C "$vm_root" submodule update --init --depth 1 wine ||
+            die "Could not fetch the Wine source. This directory must be a git clone:
+    git clone --recursive https://github.com/Hamilt79/linux-voicemod"
+    fi
+    stamp=$(git -C "$wine_src" rev-parse HEAD)
+
+    if ((!rebuild)) && [[ -x "$wine_bin" && "$(cat "$wine_build/.voicemod-stamp" 2>/dev/null)" == "$stamp" ]]; then
+        say "Wine is up to date"
+        return
+    fi
+
+    say "Building Wine with $jobs jobs (10 to 30 minutes the first time)"
+    ((rebuild)) && rm -rf -- "$wine_build"
+    mkdir -p -- "$wine_build" "$log_dir"
+    (
+        cd -- "$wine_build"
+        "$wine_src/configure" --enable-archs=i386,x86_64 --disable-tests
+        make -j"$jobs"
+    ) >"$log_dir/wine-build.log" 2>&1 ||
+        die "The Wine build failed. See $log_dir/wine-build.log"
+
+    [[ -f "$wine_build/dlls/winepulse.drv/winepulse.so" ]] ||
+        die "Wine was built without PulseAudio support. Install the libpulse
+development package, then run: $0 --rebuild-wine"
+    grep -q -E 'lib(gnutls|vulkan)[^ ]* .*not found' "$log_dir/wine-build.log" &&
+        warn "Wine was built without GnuTLS or Vulkan; Voicemod needs both. See $log_dir/wine-build.log"
+    printf '%s\n' "$stamp" >"$wine_build/.voicemod-stamp"
+}
+
+create_prefix()
+{
+    say "Preparing the Wine prefix in $WINEPREFIX"
+    mkdir -p -- "$WINEPREFIX"
+    # winemenubuilder would register menu entries and link handlers that call
+    # a system-wide 'wine', bypassing this build.
+    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' vm_wine wineboot -u >/dev/null 2>&1 ||
+        die "Could not initialise the Wine prefix."
+    "$WINESERVER" -w
+}
+
+run_installer()
+{
+    local copy="$WINEPREFIX/drive_c/voicemod-installer.exe"
+
+    say "Running the Voicemod installer (its progress window will appear)"
+    install -m 0755 -- "$installer" "$copy"
+    # /SILENT avoids the installer's final page, which hangs under Wine.
+    WINEDLLOVERRIDES='winemenubuilder.exe=d' vm_wine 'C:\voicemod-installer.exe' \
+        /SILENT /NORESTART /SUPPRESSMSGBOXES '/LOG=C:\voicemod-install.log' \
+        >"$log_dir/installer.log" 2>&1 || true
+    # The installer starts Voicemod when it finishes; close it so the first
+    # real launch goes through the launcher and gets its audio devices.
+    "$WINESERVER" -k 2>/dev/null || true
+    "$WINESERVER" -w 2>/dev/null || true
+    rm -f -- "$copy"
+    [[ -f "$app_unix" ]] ||
+        die "The installer did not install Voicemod. See $WINEPREFIX/drive_c/voicemod-install.log"
+}
+
+install_desktop_entry()
+{
+    local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local entry="$apps/voicemod-linux.desktop" icon=audio-input-microphone stale
+
+    say "Adding Voicemod to the application menu"
+    mkdir -p -- "$apps"
+    if command -v magick >/dev/null || command -v convert >/dev/null; then
+        local ico="$WINEPREFIX/drive_c/Program Files/Voicemod V3/voicemod.ico" tool=convert
+        command -v magick >/dev/null && tool=magick
+        if [[ -f "$ico" ]] && "$tool" "${ico}[0]" -resize 256x256 "$vm_root/voicemod.png" 2>/dev/null; then
+            icon="$vm_root/voicemod.png"
+        fi
+    fi
+    cat >"$entry" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Voicemod
+Comment=Real-time voice changer
+Exec="$vm_root/voicemod" %u
+Icon=$icon
+Categories=AudioVideo;Audio;
+MimeType=x-scheme-handler/voicemod;
+StartupWMClass=voicemod.exe
+Terminal=false
+EOF
+    # Entries written by other Wine installations point at prefixes and
+    # commands that do not run this build, and would swallow the login link.
+    for stale in "$apps"/wine-protocol-voicemod.desktop; do
+        [[ -f "$stale" ]] || continue
+        mkdir -p -- "$vm_root/backup"
+        mv -f -- "$stale" "$vm_root/backup/$(basename -- "$stale").$(date +%s)"
+    done
+    command -v update-desktop-database >/dev/null && update-desktop-database "$apps" 2>/dev/null || true
+    command -v xdg-mime >/dev/null && xdg-mime default voicemod-linux.desktop x-scheme-handler/voicemod 2>/dev/null || true
+}
+
+check_tools
+build_wine
+((wine_only)) && exit 0
+create_prefix
+say "Installing DXVK $dxvk_version"
+dxvk_install
+if [[ -n "$installer" ]]; then
+    run_installer
+elif [[ ! -f "$app_unix" ]]; then
+    die "Voicemod is not installed yet. Run: $0 /path/to/VoicemodInstaller.exe"
+fi
+driver_register
+"$WINESERVER" -w 2>/dev/null || true
+install_desktop_entry
+
+say "Done. Start Voicemod from the application menu, or run: $vm_root/voicemod"
