@@ -120,3 +120,8 @@ rm ~/.local/share/applications/voicemod-linux.desktop
 ```
 
 Then delete this directory.
+
+## License
+
+The scripts in this repository are under the [MIT License](LICENSE). Wine, in
+the `wine` submodule, is under the LGPL 2.1 or later.
