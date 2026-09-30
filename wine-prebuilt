@@ -1,5 +1,5 @@
 # Prebuilt Wine for the 'wine' submodule, used by 'setup --prebuilt'.
 # Written by package-wine.
-prebuilt_commit=7cca1a09c0dff7244eafff5013e090f1ec88210d
-prebuilt_url=https://github.com/Hamilt79/linux-voicemod/releases/download/wine-7cca1a09c0df/wine-voicemod-7cca1a09c0df-x86_64.tar.xz
-prebuilt_sha256=66aa9b4535de297cc9031cbc34f98d05fb483922a4c3c0a872295d2a5d20d069
+prebuilt_commit=0d08fc49c68b083ffcf4e9c07c80bb65ce47cfdf
+prebuilt_url=https://github.com/Hamilt79/linux-voicemod/releases/download/wine-0d08fc49c68b/wine-voicemod-0d08fc49c68b-x86_64.tar.xz
+prebuilt_sha256=49689101c82337cc9bb488e43b50ce5c8bb311ce59fa1248b2549a20512f470f

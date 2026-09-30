@@ -47,9 +47,59 @@ while Voicemod runs. They are removed when it exits.
 - A Vulkan-capable GPU driver
 - A network connection during setup. `setup` downloads DXVK and whatever
   Voicemod's installer fetches.
-- Build tools: `setup` lists the packages to install if any are missing.
-  `--prebuilt` needs none, but the prebuilt Wine only runs on systems at least
-  as recent as the one it was built on.
+- The packages below. `setup` checks for them and prints the same lists if any
+  are missing.
+
+For `./setup --prebuilt`:
+
+```sh
+# Debian, Ubuntu, Mint
+sudo apt install git curl xz-utils pulseaudio-utils util-linux \
+    libfreetype6 libfontconfig1 libgnutls30t64 libvulkan1 libpulse0 libdbus-1-3 \
+    libgl1 libegl1 libx11-6 libxext6 libxcomposite1 libxcursor1 libxfixes3 \
+    libxinerama1 libxi6 libxrandr2 libxrender1 libxxf86vm1
+# Fedora
+sudo dnf install git curl xz pulseaudio-utils util-linux \
+    freetype fontconfig gnutls vulkan-loader pulseaudio-libs dbus-libs \
+    mesa-libGL mesa-libEGL libX11 libXext libXcomposite libXcursor libXfixes \
+    libXinerama libXi libXrandr libXrender libXxf86vm
+# Arch, CachyOS
+sudo pacman -S --needed git curl xz libpulse util-linux \
+    freetype2 fontconfig gnutls vulkan-icd-loader dbus libglvnd libx11 libxext \
+    libxcomposite libxcursor libxfixes libxinerama libxi libxrandr libxrender \
+    libxxf86vm
+```
+
+The prebuilt Wine needs glibc 2.38 or newer: Ubuntu 24.04, Mint 22, Fedora 39,
+Debian 13, Arch, or later. On older systems, build Wine instead.
+
+For building Wine (`./setup` without `--prebuilt`):
+
+```sh
+# Debian, Ubuntu, Mint
+sudo apt install git build-essential bison flex gcc-mingw-w64 \
+    g++-mingw-w64 pulseaudio-utils util-linux curl libpulse-dev libgnutls28-dev \
+    libvulkan-dev libfreetype-dev libfontconfig-dev libgl-dev libegl-dev \
+    libx11-dev libxext-dev libxcomposite-dev libxcursor-dev libxfixes-dev \
+    libxi-dev libxinerama-dev libxrandr-dev libxrender-dev libxxf86vm-dev \
+    libxkbcommon-dev libwayland-dev libasound2-dev libdbus-1-dev libudev-dev \
+    libavcodec-dev libavformat-dev libavutil-dev ocl-icd-opencl-dev
+# Fedora
+sudo dnf install git gcc make bison flex mingw64-gcc mingw32-gcc \
+    mingw64-gcc-c++ mingw32-gcc-c++ pulseaudio-utils util-linux curl \
+    pulseaudio-libs-devel gnutls-devel vulkan-loader-devel freetype-devel \
+    fontconfig-devel mesa-libGL-devel mesa-libEGL-devel libX11-devel libXext-devel \
+    libXcomposite-devel libXcursor-devel libXfixes-devel libXi-devel \
+    libXinerama-devel libXrandr-devel libXrender-devel libXxf86vm-devel \
+    libxkbcommon-devel wayland-devel alsa-lib-devel dbus-devel systemd-devel \
+    ffmpeg-free-devel ocl-icd-devel
+# Arch, CachyOS
+sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse gnutls \
+    vulkan-headers vulkan-icd-loader freetype2 fontconfig mesa libglvnd libx11 \
+    libxext libxcomposite libxcursor libxfixes libxi libxinerama libxrandr \
+    libxrender libxxf86vm libxkbcommon wayland alsa-lib dbus systemd-libs ffmpeg \
+    opencl-headers ocl-icd
+```
 
 ## Layout
 
@@ -103,6 +153,37 @@ When Voicemod asks **"Voicemod can't find its driver installed. Would you like
 to install it now?"**, answer **No**. Its Windows driver cannot work under
 Wine. If the question keeps returning after an update, the expected driver
 version changed; set `VOICEMOD_DRIVER_VERSION` in `config`.
+
+## Troubleshooting
+
+Logs are in `logs/`: `wine-build.log`, `installer.log` and `session.log` for
+the last start. Voicemod's own log is
+`prefix/drive_c/users/<you>/AppData/Local/VoicemodV3/logs/voicemod-desktop.log`.
+
+- **"The prebuilt Wine does not run on this system."** Your system is older
+  than the one the prebuilt Wine was built on. Install the build packages above
+  and build Wine instead:
+
+  ```sh
+  ./setup --rebuild-wine /path/to/VoicemodInstaller.exe
+  ```
+
+- **"Missing system libraries" or "Missing tools".** Install the packages
+  named in the message, then run `setup` again.
+- **Blank text, unreadable windows, or "Program Error" dialogs.** Wine is
+  missing system libraries. Run `./setup` again: it checks for them.
+- **Black window.** DXVK needs a working Vulkan driver. Check that `vulkaninfo`
+  (package `vulkan-tools`) lists your GPU.
+- **"Not a Windows installer."** The path must point to the `.exe` from
+  voicemod.net, not to a file from this repository.
+- **The browser's "Open app" button does nothing.** The login link handler
+  is missing or points elsewhere. Run `./setup` again to register it, then
+  sign in again.
+- **Voicemod asks to install its driver.** Answer **No**, see
+  [Updating Voicemod](#updating-voicemod).
+- **No "Voicemod Microphone" in an application.** Start Voicemod first; the
+  devices exist only while it runs. Some applications only list devices that
+  existed when they started, so restart the application.
 
 ## Known issues
 

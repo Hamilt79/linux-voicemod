@@ -48,17 +48,71 @@ check_tools()
         command -v "$tool" >/dev/null || missing+=("$tool")
     done
     ((${#missing[@]})) || return 0
+    if ((prebuilt)); then
+        die "Missing tools: ${missing[*]}
+$runtime_packages"
+    fi
     die "Missing tools: ${missing[*]}
-On Debian/Ubuntu:  sudo apt install git build-essential bison flex \\
-    gcc-mingw-w64 pulseaudio-utils util-linux curl libpulse-dev libx11-dev \\
-    libxext-dev libfreetype-dev libgnutls28-dev libvulkan-dev libwayland-dev \\
-    libxkbcommon-dev libasound2-dev libdbus-1-dev libfontconfig-dev
-On Fedora:         sudo dnf builddep wine && sudo dnf install mingw64-gcc mingw32-gcc pulseaudio-utils
-On Arch:           sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse vulkan-headers gnutls
-With --prebuilt only git, curl, tar, xz and pactl are needed."
+On Debian, Ubuntu, Mint:  sudo apt install git build-essential bison flex gcc-mingw-w64 \\
+    g++-mingw-w64 pulseaudio-utils util-linux curl libpulse-dev libgnutls28-dev \\
+    libvulkan-dev libfreetype-dev libfontconfig-dev libgl-dev libegl-dev \\
+    libx11-dev libxext-dev libxcomposite-dev libxcursor-dev libxfixes-dev \\
+    libxi-dev libxinerama-dev libxrandr-dev libxrender-dev libxxf86vm-dev \\
+    libxkbcommon-dev libwayland-dev libasound2-dev libdbus-1-dev libudev-dev \\
+    libavcodec-dev libavformat-dev libavutil-dev ocl-icd-opencl-dev
+On Fedora:                sudo dnf install git gcc make bison flex mingw64-gcc mingw32-gcc \\
+    mingw64-gcc-c++ mingw32-gcc-c++ pulseaudio-utils util-linux curl \\
+    pulseaudio-libs-devel gnutls-devel vulkan-loader-devel freetype-devel \\
+    fontconfig-devel mesa-libGL-devel mesa-libEGL-devel libX11-devel libXext-devel \\
+    libXcomposite-devel libXcursor-devel libXfixes-devel libXi-devel \\
+    libXinerama-devel libXrandr-devel libXrender-devel libXxf86vm-devel \\
+    libxkbcommon-devel wayland-devel alsa-lib-devel dbus-devel systemd-devel \\
+    ffmpeg-free-devel ocl-icd-devel
+On Arch, CachyOS:         sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse gnutls \\
+    vulkan-headers vulkan-icd-loader freetype2 fontconfig mesa libglvnd libx11 \\
+    libxext libxcomposite libxcursor libxfixes libxi libxinerama libxrandr \\
+    libxrender libxxf86vm libxkbcommon wayland alsa-lib dbus systemd-libs ffmpeg \\
+    opencl-headers ocl-icd
+Or use --prebuilt, which needs no build tools."
 }
 
 # The Wine commit this version of the repository expects.
+# The libraries the prebuilt Wine loads for Voicemod: fonts, X11, Vulkan,
+# OpenGL, TLS, PulseAudio and D-Bus.  Wine starts without them but shows
+# blank text or crashes.  Package names verified 2026-09-30.
+runtime_libraries=(libfreetype.so.6 libfontconfig.so.1 libgnutls.so.30 libvulkan.so.1
+    libpulse.so.0 libdbus-1.so.3 libGL.so.1 libEGL.so.1 libX11.so.6 libXext.so.6
+    libXcomposite.so.1 libXcursor.so.1 libXfixes.so.3 libXinerama.so.1 libXi.so.6
+    libXrandr.so.2 libXrender.so.1 libXxf86vm.so.1)
+runtime_packages="On Debian, Ubuntu, Mint:  sudo apt install git curl xz-utils pulseaudio-utils util-linux \\
+    libfreetype6 libfontconfig1 libgnutls30t64 libvulkan1 libpulse0 libdbus-1-3 \\
+    libgl1 libegl1 libx11-6 libxext6 libxcomposite1 libxcursor1 libxfixes3 \\
+    libxinerama1 libxi6 libxrandr2 libxrender1 libxxf86vm1
+On Fedora:                sudo dnf install git curl xz pulseaudio-utils util-linux \\
+    freetype fontconfig gnutls vulkan-loader pulseaudio-libs dbus-libs \\
+    mesa-libGL mesa-libEGL libX11 libXext libXcomposite libXcursor libXfixes \\
+    libXinerama libXi libXrandr libXrender libXxf86vm
+On Arch, CachyOS:         sudo pacman -S --needed git curl xz libpulse util-linux \\
+    freetype2 fontconfig gnutls vulkan-icd-loader dbus libglvnd libx11 libxext \\
+    libxcomposite libxcursor libxfixes libxinerama libxi libxrandr libxrender \\
+    libxxf86vm"
+
+check_runtime_libraries()
+{
+    local ldconfig missing=() lib cache
+
+    for ldconfig in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+        cache=$("$ldconfig" -p 2>/dev/null) && break
+    done
+    [[ -n "$cache" ]] || { warn "Could not list the system libraries; skipping the check."; return; }
+    for lib in "${runtime_libraries[@]}"; do
+        grep -q -F "$lib " <<<"$cache" || missing+=("$lib")
+    done
+    ((${#missing[@]})) || return 0
+    die "Missing system libraries: ${missing[*]}
+$runtime_packages"
+}
+
 wine_commit()
 {
     if [[ -e "$wine_src/.git" ]]; then git -C "$wine_src" rev-parse HEAD
@@ -79,6 +133,7 @@ fetch_wine()
     commit=$(wine_commit)
     if wine_is_current "$commit"; then
         say "Wine is up to date"
+        check_runtime_libraries
         return
     fi
 
@@ -104,6 +159,7 @@ fetch_wine()
     "$wine_bin" --version >/dev/null 2>&1 ||
         die "The prebuilt Wine does not run on this system, which is probably
 older than the one it was built on. Run $0 --rebuild-wine to build it instead."
+    check_runtime_libraries
 }
 
 build_wine()
@@ -145,8 +201,10 @@ create_prefix()
 {
     say "Preparing the Wine prefix in $WINEPREFIX"
     mkdir -p -- "$WINEPREFIX"
-    # Skip the prompts to download Mono and Gecko, which Voicemod does not use.
-    WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree=d;mshtml=d" vm_wine wineboot -u >/dev/null 2>&1 ||
+    # --init skips the prefix's startup programs: Voicemod registers itself as
+    # one, and would otherwise start from inside setup.  mscoree and mshtml
+    # are disabled to skip the prompts to download Mono and Gecko.
+    WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree=d;mshtml=d" vm_wine wineboot --init --update >/dev/null 2>&1 ||
         die "Could not initialise the Wine prefix."
     "$WINESERVER" -w
 }

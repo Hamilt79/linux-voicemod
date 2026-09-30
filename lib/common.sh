@@ -36,6 +36,11 @@ unset WINEARCH WINELOADER WINEDLLPATH
 # for every process: Wine's services keep the environment of whichever
 # command started them.
 export WINEDLLOVERRIDES='winemenubuilder.exe=d'
+# Chromium's renderer sandbox does not work under Wine and leaves Voicemod's
+# window black.  Set for every process so that an instance started by the
+# installer renders too.
+export QTWEBENGINE_DISABLE_SANDBOX=1
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --no-sandbox"
 
 app_exe='C:\Program Files\Voicemod V3\Voicemod.exe'
 app_unix="$WINEPREFIX/drive_c/Program Files/Voicemod V3/Voicemod.exe"

@@ -68,9 +68,6 @@ cleanup()
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-export QTWEBENGINE_DISABLE_SANDBOX=1
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --no-sandbox"
-
 {
     audio_up
     driver_register
