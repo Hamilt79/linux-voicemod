@@ -113,16 +113,10 @@ check_runtime_libraries()
 $runtime_packages"
 }
 
-# The version of Wine to use.  'git pull' leaves a fetched Wine source at
-# its previous version, so only a source that is on a branch, which means
-# someone is working on it, takes precedence over what this repository names.
+# The version of Wine this version of the repository is made for.
 wine_commit()
 {
-    if [[ -e "$wine_src/.git" ]] && git -C "$wine_src" symbolic-ref -q HEAD >/dev/null; then
-        git -C "$wine_src" rev-parse HEAD
-    else
-        git -C "$vm_root" ls-tree HEAD wine | awk '{ print $3 }'
-    fi
+    git -C "$vm_root" ls-tree HEAD wine | awk '{ print $3 }'
 }
 
 wine_is_current()
@@ -172,6 +166,17 @@ build_wine()
     local stamp jobs=${JOBS:-$(nproc)}
 
     stamp=$(wine_commit)
+    # A Wine source that is on a branch is being worked on and is built as it
+    # is.  Otherwise it is at the version it was fetched at: 'git pull' does
+    # not update it.
+    if [[ -e "$wine_src/.git" ]] && git -C "$wine_src" symbolic-ref -q HEAD >/dev/null; then
+        if [[ "$(git -C "$wine_src" rev-parse HEAD)" != "$stamp" ]]; then
+            stamp=$(git -C "$wine_src" rev-parse HEAD)
+            warn "Building the Wine source in $wine_src as it is, which is not the
+version this repository is made for. To get that version, run:
+    git -C $vm_root submodule update --init --depth 1 wine"
+        fi
+    fi
     if wine_is_current "$stamp"; then
         say "Wine is up to date"
         return
@@ -182,6 +187,10 @@ build_wine()
             die "Could not fetch the Wine source. This directory must be a git clone:
     git clone --recursive https://github.com/Hamilt79/linux-voicemod"
     fi
+    [[ -d "$wine_src/dlls/winevoicemod.sys" ]] ||
+        die "The Wine source in $wine_src does not have the Voicemod changes.
+To get the version this repository is made for, run:
+    git -C $vm_root submodule update --init --depth 1 wine"
 
     say "Building Wine with $jobs jobs (10 to 30 minutes the first time)"
     rm -rf -- "$wine_build"
