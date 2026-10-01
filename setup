@@ -113,10 +113,15 @@ check_runtime_libraries()
 $runtime_packages"
 }
 
+# The version of Wine to use.  'git pull' leaves a fetched Wine source at
+# its previous version, so only a source that is on a branch, which means
+# someone is working on it, takes precedence over what this repository names.
 wine_commit()
 {
-    if [[ -e "$wine_src/.git" ]]; then git -C "$wine_src" rev-parse HEAD
-    else git -C "$vm_root" ls-tree HEAD wine | awk '{ print $3 }'
+    if [[ -e "$wine_src/.git" ]] && git -C "$wine_src" symbolic-ref -q HEAD >/dev/null; then
+        git -C "$wine_src" rev-parse HEAD
+    else
+        git -C "$vm_root" ls-tree HEAD wine | awk '{ print $3 }'
     fi
 }
 
@@ -166,17 +171,17 @@ build_wine()
 {
     local stamp jobs=${JOBS:-$(nproc)}
 
-    if wine_is_current "$(wine_commit)"; then
+    stamp=$(wine_commit)
+    if wine_is_current "$stamp"; then
         say "Wine is up to date"
         return
     fi
-    if [[ ! -f "$wine_src/configure" ]]; then
+    if [[ ! -f "$wine_src/configure" || "$(git -C "$wine_src" rev-parse HEAD)" != "$stamp" ]]; then
         say "Fetching Wine"
         git -C "$vm_root" submodule update --init --depth 1 wine ||
             die "Could not fetch the Wine source. This directory must be a git clone:
     git clone --recursive https://github.com/Hamilt79/linux-voicemod"
     fi
-    stamp=$(git -C "$wine_src" rev-parse HEAD)
 
     say "Building Wine with $jobs jobs (10 to 30 minutes the first time)"
     rm -rf -- "$wine_build"
