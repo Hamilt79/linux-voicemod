@@ -1,31 +1,39 @@
 # Voicemod on Linux
 
-Runs Voicemod 3 on Linux through a modified Wine, and exposes the changed voice
-to Linux applications as a microphone called **Voicemod Microphone**.
+A helper tool for running Voicemod on Linux systems(tested on Ubuntu, Fedora(distrobox), Arch(distrobox))
+that uses a custom version of [wine](https://github.com/Hamilt79/wine-voicemod) to get around the 
+incompatibility issues. 
 
 ## Install
 
-Download the Windows installer from voicemod.net, then:
+Download the Voicemod installer EXE from voicemod.net.
+> It should look something like "VoicemodInstaller_1.6.22-lyz4mh.exe" \
+> The exact version/ending characters shouldn't matter
+
+Then run:
 
 ```sh
 git clone https://github.com/Hamilt79/linux-voicemod
 cd linux-voicemod
 ./setup --prebuilt /path/to/VoicemodInstaller.exe
-# Remove --prebuilt to build Wine yourself, which takes 10 to 30 minutes.
 ```
+> Remove --prebuilt to build Wine yourself; it takes 10 to 30 minutes but is more reliable across different systems.
 
-After that, start Voicemod from the application menu or with:
+After that, you should be able to choose Voicemod from your choice of 
+application menus, or run:
 
 ```sh
 ./voicemod
 ```
 
-Sign in when Voicemod asks. The browser's **Open app** button hands the login
-back to Voicemod.
+Sign in as usual. Voicemod should open a sign-in page in your browser.
+> During the installation process, if Voicemod asks you to install their drive, decline. \
+> If you just see a white rectangle window for several minutes during the installation,
+> close it from the toolbar and try to reopen Voicemod from the application menu. 
 
-In the application you want to use the voice in (Discord, OBS, a game), select
-**Voicemod Microphone** as the input device. Inside Voicemod, keep your real
-microphone selected as the input.
+Select **Voicemod Microphone** as the input device in *other* software,
+and your real mic as the input device in Voicemod. 
+> If you find no audio coming through, go to the Voicemod settings and reselect your correct microphone. 
 
 ## Commands
 
@@ -54,19 +62,20 @@ the keys typed into its own windows, and Voicemod runs as an X11 application
 | Wayland on KDE Plasma, with the setting below | Any application(probably) |
 
 On KDE Plasma, **System Settings -> Legacy X11 App Support** has options that
-lets X11 applications read keys typed into all applications. It is off by
-default. You should change it to whatever you are comfortable with privacy-wise, but the default
-*Prohibited* option may be fine for the applications you wish to use.
+let X11 applications read keys typed into all applications. It is off by default. \
+You should change it to whatever you are comfortable with privacy-wise, but the default
+*Prohibited* option may be fine for the applications you wish to use. I suggest 
+trying it out as-is, then upping the support level if needed.
 
-GNOME does not have such an option from my understanding, but the default behaviour might be fine.
+GNOME does not have such an option, as far as I understand, but the default behaviour might be fine.
 
 ## Requirements
 
 - PipeWire with its PulseAudio server, or PulseAudio
 - A Vulkan-capable GPU driver
-- A network connection during setup. `setup` downloads DXVK and whatever
+- A network connection during setup. `./setup` downloads DXVK and whatever
   Voicemod's installer fetches.
-- The packages below. `setup` checks for them and prints the same lists if any
+- The packages below. `./setup` checks for them and prints the same lists if any
   are missing.
 
 For `./setup --prebuilt`:
@@ -88,9 +97,12 @@ sudo pacman -S --needed git curl xz libpulse util-linux \
     libxcomposite libxcursor libxfixes libxinerama libxi libxrandr libxrender \
     libxxf86vm
 ```
+> These were confirmed to be the right choices in a distrobox container, but
+> if there are any more missing packages, feel free to let me know.
 
 The prebuilt Wine needs glibc 2.38 or newer: Ubuntu 24.04, Mint 22, Fedora 39,
-Debian 13, Arch, or later. On older systems, build Wine instead.
+Debian 13, Arch, or later. \
+On older systems, build Wine instead.
 
 For building Wine (`./setup` without `--prebuilt`):
 
@@ -119,6 +131,7 @@ sudo pacman -S --needed base-devel git mingw-w64-gcc libpulse gnutls \
     libxrender libxxf86vm libxkbcommon wayland alsa-lib dbus systemd-libs ffmpeg \
     opencl-headers ocl-icd
 ```
+> Same deal
 
 ## Layout
 
@@ -146,11 +159,9 @@ JOBS=8                                # parallel build jobs
 ## Why a modified Wine
 
 Voicemod relies on a Windows kernel audio driver and a few Windows behaviors
-that Wine does not provide. The changes live in a fork of Wine,
-[wine-voicemod](https://github.com/Hamilt79/wine-voicemod), which this
-repository includes as the `wine` submodule. They are small, about 600 lines,
-but some of them change Wine's Linux-side core, so they cannot be shipped as
-drop-in DLLs for a stock Wine.
+that Wine does not provide. The changes live in a small fork of Wine at:
+[wine-voicemod](https://github.com/Hamilt79/wine-voicemod). \
+This repository includes this fork as a submodule. 
 
 | Change | Purpose |
 | --- | --- |
@@ -164,38 +175,40 @@ drop-in DLLs for a stock Wine.
 
 ## Updating Voicemod
 
-Voicemod refuses to start when a newer release exists and offers to update
-itself. Accept the update; the launcher re-registers the bridge driver on the
-next start. If the updater fails, download the new installer and run `setup`
-with it again. Your settings and login are kept.
+You should be able to accept Voicemod's update prompts with no issue, and the program
+*should* continue to work. It's been tested across a few minor changes, but nothing big yet. \  
+If an update fails, you can try re-running the `./setup` script with the new installer.
 
 When Voicemod asks **"Voicemod can't find its driver installed. Would you like
 to install it now?"**, answer **No**. Its Windows driver cannot work under
-Wine. If the question keeps returning after an update, the expected driver
-version changed; set `VOICEMOD_DRIVER_VERSION` in `config`.
+Wine. 
+> If the question keeps returning after an update and I haven't pushed out a new version,
+> you can change the expected driver version by setting `VOICEMOD_DRIVER_VERSION` in `config`.
 
 ## Troubleshooting
 
 Logs are in `logs/`: `wine-build.log`, `installer.log` and `session.log` for
-the last start. Voicemod's own log is
+the last start. Voicemod's own log is at
 `prefix/drive_c/users/<you>/AppData/Local/VoicemodV3/logs/voicemod-desktop.log`.
 
-- **"The prebuilt Wine does not run on this system."** Your system is older
-  than the one the prebuilt Wine was built on. Install the build packages above
-  and build Wine instead:
-
+- **"The prebuilt Wine does not run on this system."** Your system isn't
+  compatible with the version of Wine I package; you will need to build Wine
+  yourself:
+  
   ```sh
   ./setup --rebuild-wine /path/to/VoicemodInstaller.exe
   ```
 
 - **"Missing system libraries" or "Missing tools".** Install the packages
-  named in the message, then run `setup` again.
-- **Blank text, unreadable windows, or "Program Error" dialogs.** Wine is
-  missing system libraries. Run `./setup` again: it checks for them.
+  named in the message, then run `./setup` again.
 - **Black window.** DXVK needs a working Vulkan driver. Check that `vulkaninfo`
   (package `vulkan-tools`) lists your GPU.
-- **"Not a Windows installer."** The path must point to the `.exe` from
-  voicemod.net, not to a file from this repository.
+- **"Not a Windows installer."** You didn't set the path to the EXE right, it should be:
+  
+  ```sh
+  ./setup --rebuild-wine /path/to/VoicemodInstaller.exe
+  ```
+
 - **The browser's "Open app" button does nothing.** The login link handler
   is missing or points elsewhere. Run `./setup` again to register it, then
   sign in again.
@@ -207,9 +220,7 @@ the last start. Voicemod's own log is
 
 ## Known issues
 
-- **Voicemod loses your real microphone.** If you make **Voicemod Microphone**
-  the system's default input device, Voicemod may stop using your real
-  microphone. Select your real microphone again in Voicemod's input settings.
+- **It can be hard to move the Voicemod window around again after maximizing it.** I'm working on it.
 
 ## Removing
 
@@ -218,7 +229,7 @@ the last start. Voicemod's own log is
 rm ~/.local/share/applications/voicemod-linux.desktop
 ```
 
-Then delete this directory.
+Then delete this directory or only the prefix.
 
 ## License
 
