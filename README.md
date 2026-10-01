@@ -41,6 +41,25 @@ microphone selected as the input.
 The **Voicemod** output device and the **Voicemod Microphone** exist only
 while Voicemod runs. They are removed when it exits.
 
+## Voicemod's Keybinds in other applications
+
+Voicemod's soundboard and other keybinds should also now work with the program. 
+How far that reaches depends on the session, because Wayland only shows an application
+the keys typed into its own windows, and Voicemod runs as an X11 application
+
+| Session | Keybinds work while the focus is on |
+| --- | --- |
+| X11 | Any application |
+| Wayland | Voicemod and other X11 applications |
+| Wayland on KDE Plasma, with the setting below | Any application(probably) |
+
+On KDE Plasma, **System Settings -> Legacy X11 App Support** has options that
+lets X11 applications read keys typed into all applications. It is off by
+default. You should change it to whatever you are comfortable with privacy-wise, but the default
+*Prohibited* option may be fine for the applications you wish to use.
+
+GNOME does not have such an option from my understanding, but the default behaviour might be fine.
+
 ## Requirements
 
 - PipeWire with its PulseAudio server, or PulseAudio
@@ -129,7 +148,7 @@ JOBS=8                                # parallel build jobs
 Voicemod relies on a Windows kernel audio driver and a few Windows behaviors
 that Wine does not provide. The changes live in a fork of Wine,
 [wine-voicemod](https://github.com/Hamilt79/wine-voicemod), which this
-repository includes as the `wine` submodule. They are small, about 450 lines,
+repository includes as the `wine` submodule. They are small, about 600 lines,
 but some of them change Wine's Linux-side core, so they cannot be shipped as
 drop-in DLLs for a stock Wine.
 
@@ -141,6 +160,7 @@ drop-in DLLs for a stock Wine.
 | `setupapi`, `wbemprox` | Device lookup functions Voicemod calls at startup |
 | `winepulse.drv` | Presents the bridge devices under the names Voicemod searches for |
 | `msvcrt` | Fixes number parsing that made voices such as Clean mic fail to load |
+| `winex11.drv`, `win32u` | Fixes maximizing and restoring the window, and passes keys pressed in other applications to Voicemod's keybinds |
 
 ## Updating Voicemod
 
