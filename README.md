@@ -6,6 +6,12 @@ incompatibility issues.
 
 ## Install
 
+### Video Install Demo
+> AUDIO WARNING: A somewhat loud sound effect is played at the end
+
+https://github.com/user-attachments/assets/edfe3502-bea7-45b9-b037-a1f099b1e9f5
+
+### Text Install Directions
 Download the Voicemod installer EXE from voicemod.net.
 > It should look something like "VoicemodInstaller_1.6.22-lyz4mh.exe" \
 > The exact version/ending characters shouldn't matter
