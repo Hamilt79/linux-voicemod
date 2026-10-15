@@ -223,6 +223,9 @@ the last start. Voicemod's own log is at
 - **No "Voicemod Microphone" in an application.** Start Voicemod first; the
   devices exist only while it runs. Some applications only list devices that
   existed when they started, so restart the application.
+- **Echo or a feedback loop, and only the soundboard comes through.** Voicemod
+  is recording its own output. In Voicemod's settings, select your real
+  microphone as the input.
 
 ## Known issues
 
