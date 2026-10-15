@@ -41,6 +41,15 @@ Select **Voicemod Microphone** as the input device in *other* software,
 and your real mic as the input device in Voicemod. 
 > If you find no audio coming through, go to the Voicemod settings and reselect your correct microphone. 
 
+## Updating this tool
+
+```sh
+git pull
+./setup --prebuilt
+```
+> Leave out --prebuilt if you built Wine yourself.
+> This should keep all of your settings and does not require a new Voicemod EXE.
+
 ## Commands
 
 | Command | Effect |
